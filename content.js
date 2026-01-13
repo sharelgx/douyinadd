@@ -172,103 +172,229 @@ async function navigateToUser(url) {
   // 这里不等待，让页面自然加载
 }
 
+// 模拟真实用户点击（更接近人工操作）
+async function simulateHumanClick(element) {
+  if (!element) return false;
+  
+  try {
+    // 获取元素位置
+    const rect = element.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    
+    // 模拟鼠标移动到按钮上
+    const mouseOverEvent = new MouseEvent('mouseover', {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y
+    });
+    element.dispatchEvent(mouseOverEvent);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // 模拟鼠标进入
+    const mouseEnterEvent = new MouseEvent('mouseenter', {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y
+    });
+    element.dispatchEvent(mouseEnterEvent);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // 模拟鼠标按下
+    const mouseDownEvent = new MouseEvent('mousedown', {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      button: 0
+    });
+    element.dispatchEvent(mouseDownEvent);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // 模拟鼠标抬起
+    const mouseUpEvent = new MouseEvent('mouseup', {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      button: 0
+    });
+    element.dispatchEvent(mouseUpEvent);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    // 模拟点击事件
+    const clickEvent = new MouseEvent('click', {
+      view: window,
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      button: 0
+    });
+    element.dispatchEvent(clickEvent);
+    
+    // 也尝试直接调用click方法（作为备用）
+    element.click();
+    
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    return true;
+  } catch (error) {
+    logger.error(`模拟点击失败: ${error.message}`);
+    return false;
+  }
+}
+
 // 查找并点击关注按钮
 async function clickFollowButton() {
-  // 等待页面加载完成
-  await new Promise(resolve => setTimeout(resolve, 3000));
+  logger.info('开始查找关注按钮...');
   
-  // 方法1: 通过aria-label或name属性查找
+  // 等待页面加载完成（增加等待时间）
+  await new Promise(resolve => setTimeout(resolve, 5000));
+  
+  // 多次尝试查找按钮（因为页面可能是动态加载的）
   let followButton = null;
+  let attempts = 0;
+  const maxAttempts = 5;
   
-  // 查找所有按钮
-  const buttons = Array.from(document.querySelectorAll('button'));
-  
-  // 优先查找包含"关注"文本且不包含"已关注"或"取消关注"的按钮
-  for (const button of buttons) {
-    const text = (button.textContent || button.innerText || '').trim();
-    const ariaLabel = (button.getAttribute('aria-label') || button.getAttribute('name') || '').trim();
+  while (!followButton && attempts < maxAttempts) {
+    attempts++;
+    logger.info(`第 ${attempts} 次尝试查找关注按钮...`);
     
-    // 检查文本内容
-    if ((text === '关注' || ariaLabel === '关注') && 
-        !text.includes('已关注') && 
-        !text.includes('取消关注') &&
-        !ariaLabel.includes('已关注') &&
-        !ariaLabel.includes('取消关注')) {
-      // 检查按钮是否可见且可点击
-      const rect = button.getBoundingClientRect();
-      const style = window.getComputedStyle(button);
+    // 查找所有按钮
+    const buttons = Array.from(document.querySelectorAll('button'));
+    logger.info(`找到 ${buttons.length} 个按钮`);
+    
+    // 方法1: 通过文本内容查找
+    for (const button of buttons) {
+      const text = (button.textContent || button.innerText || '').trim();
+      const ariaLabel = (button.getAttribute('aria-label') || '').trim();
+      const title = (button.getAttribute('title') || '').trim();
       
-      if (rect.width > 0 && 
-          rect.height > 0 && 
-          style.display !== 'none' && 
-          style.visibility !== 'hidden' &&
-          style.opacity !== '0' &&
-          !button.disabled) {
-        followButton = button;
-        break;
+      logger.info(`检查按钮: text="${text}", aria-label="${ariaLabel}", title="${title}"`);
+      
+      // 检查文本内容（更宽松的匹配）
+      if ((text === '关注' || 
+           (text.includes('关注') && !text.includes('已关注') && !text.includes('取消关注'))) ||
+           ariaLabel === '关注' ||
+           (ariaLabel.includes('关注') && !ariaLabel.includes('已关注')) ||
+           title === '关注' ||
+           (title.includes('关注') && !title.includes('已关注'))) {
+        
+        // 检查按钮是否可见且可点击
+        const rect = button.getBoundingClientRect();
+        const style = window.getComputedStyle(button);
+        const isVisible = rect.width > 0 && 
+                         rect.height > 0 && 
+                         style.display !== 'none' && 
+                         style.visibility !== 'hidden' &&
+                         style.opacity !== '0' &&
+                         !button.disabled;
+        
+        logger.info(`找到可能的关注按钮: text="${text}", visible=${isVisible}, rect=(${rect.left},${rect.top},${rect.width},${rect.height})`);
+        
+        if (isVisible) {
+          followButton = button;
+          logger.success(`找到关注按钮: ${text}`);
+          break;
+        }
       }
+    }
+    
+    // 如果还没找到，等待一下再试
+    if (!followButton && attempts < maxAttempts) {
+      logger.info(`未找到关注按钮，等待2秒后重试...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
   }
   
-  // 方法2: 如果没找到，尝试通过类名或属性查找
+  // 方法2: 如果还没找到，尝试通过类名或属性查找
   if (!followButton) {
+    logger.info('尝试通过类名查找关注按钮...');
     const possibleSelectors = [
       'button[class*="follow"]',
       'button[class*="Follow"]',
       'div[class*="follow"] button',
       'div[class*="Follow"] button',
+      '[role="button"][aria-label*="关注"]',
+      'button:has-text("关注")'
     ];
     
     for (const selector of possibleSelectors) {
-      const possibleButtons = document.querySelectorAll(selector);
-      for (const btn of possibleButtons) {
-        const text = (btn.textContent || btn.innerText || '').trim();
-        if (text.includes('关注') && 
-            !text.includes('已关注') && 
-            !text.includes('取消关注')) {
-          const rect = btn.getBoundingClientRect();
-          const style = window.getComputedStyle(btn);
-          
-          if (rect.width > 0 && 
-              rect.height > 0 && 
-              style.display !== 'none' && 
-              style.visibility !== 'hidden') {
-            followButton = btn;
-            break;
+      try {
+        const possibleButtons = document.querySelectorAll(selector);
+        logger.info(`选择器 "${selector}" 找到 ${possibleButtons.length} 个元素`);
+        
+        for (const btn of possibleButtons) {
+          const text = (btn.textContent || btn.innerText || '').trim();
+          if (text.includes('关注') && 
+              !text.includes('已关注') && 
+              !text.includes('取消关注')) {
+            const rect = btn.getBoundingClientRect();
+            const style = window.getComputedStyle(btn);
+            
+            if (rect.width > 0 && 
+                rect.height > 0 && 
+                style.display !== 'none' && 
+                style.visibility !== 'hidden') {
+              followButton = btn;
+              logger.success(`通过选择器找到关注按钮: ${selector}`);
+              break;
+            }
           }
         }
+        if (followButton) break;
+      } catch (e) {
+        // 某些选择器可能不支持，忽略错误
       }
-      if (followButton) break;
     }
   }
   
   if (followButton) {
+    logger.info('找到关注按钮，准备点击...');
+    
     // 滚动到按钮位置
     followButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // 尝试多种点击方式
-    try {
-      // 方式1: 直接点击
-      followButton.click();
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      // 方式2: 如果直接点击无效，尝试触发事件
-      const clickEvent = new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        view: window
-      });
-      followButton.dispatchEvent(clickEvent);
-      
+    // 使用模拟真实用户点击
+    logger.info('执行模拟点击...');
+    const clicked = await simulateHumanClick(followButton);
+    
+    if (clicked) {
+      logger.success('关注按钮点击成功');
       return true;
-    } catch (error) {
-      console.error('点击关注按钮失败:', error);
-      return false;
+    } else {
+      logger.error('模拟点击失败，尝试直接点击...');
+      // 备用方案：直接点击
+      try {
+        followButton.click();
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return true;
+      } catch (error) {
+        logger.error(`直接点击也失败: ${error.message}`);
+        return false;
+      }
     }
+  } else {
+    logger.error('未找到关注按钮');
+    // 输出所有按钮信息用于调试
+    const allButtons = Array.from(document.querySelectorAll('button'));
+    logger.info(`页面共有 ${allButtons.length} 个按钮`);
+    allButtons.forEach((btn, index) => {
+      const text = (btn.textContent || btn.innerText || '').trim();
+      if (text) {
+        logger.info(`按钮${index}: "${text}"`);
+      }
+    });
+    return false;
   }
-  
-  return false;
 }
 
 // 处理单个用户关注
@@ -528,32 +654,50 @@ function sendMessage(action, text, type) {
     action,
     text,
     type
-  }).catch(() => {
+  }).catch((error) => {
     // popup可能已关闭，忽略错误
+    // 只在控制台记录，不抛出错误
+    if (error.message && !error.message.includes('Receiving end does not exist')) {
+      console.log('发送消息到popup失败（popup可能已关闭）:', error.message);
+    }
   });
 }
 
 // 监听来自popup的消息
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'startFollow') {
-    startFollow(message.userList, message.interval, message.keyExpiry, message.skipKeyCheck || false);
-    sendResponse({ success: true });
-  } else if (message.action === 'stopFollow') {
-    stopFollow();
-    sendResponse({ success: true });
+  try {
+    if (message.action === 'startFollow') {
+      logger.info('收到开始关注消息');
+      startFollow(message.userList, message.interval, message.keyExpiry, message.skipKeyCheck || false);
+      sendResponse({ success: true });
+    } else if (message.action === 'stopFollow') {
+      logger.info('收到停止关注消息');
+      stopFollow();
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: false, error: '未知的操作' });
+    }
+  } catch (error) {
+    logger.error(`处理消息失败: ${error.message}`);
+    sendResponse({ success: false, error: error.message });
   }
-  return true;
+  return true; // 保持消息通道开放，允许异步响应
 });
 
 // 页面加载完成后初始化
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', async () => {
-    logger.info('抖音自动关注脚本已加载');
-    // 尝试恢复未完成的任务
-    await restoreFollowState();
-  });
-} else {
+async function initContentScript() {
   logger.info('抖音自动关注脚本已加载');
   // 尝试恢复未完成的任务
-  restoreFollowState();
+  try {
+    await restoreFollowState();
+  } catch (error) {
+    logger.error(`初始化失败: ${error.message}`);
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initContentScript);
+} else {
+  // 如果页面已经加载完成，立即初始化
+  initContentScript();
 }

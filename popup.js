@@ -156,28 +156,83 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     
-    // 发送开始关注消息
-    chrome.tabs.sendMessage(tab.id, {
-      action: 'startFollow',
-      interval,
-      userList: userList.split('\n').filter(url => url.trim()),
-      keyExpiry,
-      skipKeyCheck
-    });
+    // 确保content script已注入
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['content.js']
+      });
+      await new Promise(resolve => setTimeout(resolve, 500)); // 等待脚本加载
+    } catch (error) {
+      // content script可能已经注入，忽略错误
+      console.log('Content script可能已存在:', error);
+    }
     
-    document.getElementById('startBtn').disabled = true;
-    document.getElementById('stopBtn').disabled = false;
-    updateStatus('开始关注...', 'info');
+    // 发送开始关注消息（带错误处理）
+    try {
+      await chrome.tabs.sendMessage(tab.id, {
+        action: 'startFollow',
+        interval,
+        userList: userList.split('\n').filter(url => url.trim()),
+        keyExpiry,
+        skipKeyCheck
+      });
+      
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('stopBtn').disabled = false;
+      updateStatus('开始关注...', 'info');
+    } catch (error) {
+      console.error('发送消息失败:', error);
+      updateStatus('无法连接到页面，请刷新页面后重试', 'error');
+      // 尝试重新注入脚本
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['content.js']
+        });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        // 重试发送消息
+        await chrome.tabs.sendMessage(tab.id, {
+          action: 'startFollow',
+          interval,
+          userList: userList.split('\n').filter(url => url.trim()),
+          keyExpiry,
+          skipKeyCheck
+        });
+        document.getElementById('startBtn').disabled = true;
+        document.getElementById('stopBtn').disabled = false;
+        updateStatus('开始关注...', 'info');
+      } catch (retryError) {
+        updateStatus('连接失败，请刷新抖音页面后重试', 'error');
+      }
+    }
   });
   
   // 停止关注按钮
   document.getElementById('stopBtn').addEventListener('click', async () => {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    chrome.tabs.sendMessage(tab.id, { action: 'stopFollow' });
-    
-    document.getElementById('startBtn').disabled = false;
-    document.getElementById('stopBtn').disabled = true;
-    updateStatus('已停止关注', 'info');
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      
+      if (tab && tab.id) {
+        try {
+          await chrome.tabs.sendMessage(tab.id, { action: 'stopFollow' });
+        } catch (error) {
+          // 如果消息发送失败，通过存储来停止
+          console.log('无法发送停止消息，使用存储方式停止:', error);
+          await chrome.storage.local.set({ isFollowing: false });
+        }
+      }
+      
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+      updateStatus('已停止关注', 'info');
+    } catch (error) {
+      console.error('停止关注失败:', error);
+      // 即使出错也更新UI
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+      updateStatus('已停止关注', 'info');
+    }
   });
   
   // 清空已关注记录按钮
