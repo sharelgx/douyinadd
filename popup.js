@@ -1,5 +1,39 @@
-// 密钥过期时间（Unix时间戳）
-const KEY_EXPIRY_TIMESTAMP = 1768302100; // 示例时间，需要根据实际情况修改
+// 硬编码的密钥
+const HARDCODED_KEY = '123';
+
+// 密钥过期时间（三个月后，Unix时间戳）
+// 三个月 = 90天 = 90 * 24 * 60 * 60 = 7776000秒
+const THREE_MONTHS_SECONDS = 90 * 24 * 60 * 60;
+
+// 将Unix时间戳转换为datetime-local格式的字符串
+function timestampToDateTimeLocal(timestamp) {
+  const date = new Date(timestamp * 1000);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+// 将datetime-local格式的字符串转换为Unix时间戳
+function dateTimeLocalToTimestamp(dateTimeLocal) {
+  if (!dateTimeLocal) return null;
+  return Math.floor(new Date(dateTimeLocal).getTime() / 1000);
+}
+
+// 格式化时间显示
+function formatDateTime(timestamp) {
+  const date = new Date(timestamp * 1000);
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+}
 
 // 时间API列表（备用）
 const TIME_APIS = [
@@ -35,22 +69,57 @@ async function getNetworkTime() {
   throw new Error('所有时间API都不可用');
 }
 
-// 检查密钥是否过期
+// 检查密钥并验证过期时间
 async function checkKeyExpiry() {
   try {
-    const currentTime = await getNetworkTime();
-    const expiryTime = parseInt(document.getElementById('keyExpiry').value) || KEY_EXPIRY_TIMESTAMP;
-    
+    const inputKey = document.getElementById('newKey').value.trim();
     const statusDiv = document.getElementById('expiryStatus');
-    if (currentTime >= expiryTime) {
-      statusDiv.textContent = `❌ 密钥已过期 (当前: ${currentTime}, 过期: ${expiryTime})`;
+    const displayDiv = document.getElementById('expiryDisplay');
+    
+    // 验证密钥
+    if (!inputKey) {
+      statusDiv.textContent = `❌ 请输入密钥`;
+      statusDiv.className = 'status error';
+      displayDiv.textContent = '';
+      return false;
+    }
+    
+    if (inputKey !== HARDCODED_KEY) {
+      statusDiv.textContent = `❌ 密钥错误`;
+      statusDiv.className = 'status error';
+      displayDiv.textContent = '';
+      return false;
+    }
+    
+    // 密钥正确，获取当前网络时间
+    const currentTime = await getNetworkTime();
+    
+    // 从存储中获取密钥过期时间，如果没有则设置为三个月后
+    const result = await chrome.storage.local.get(['keyExpiry']);
+    let expiryTimestamp = result.keyExpiry;
+    
+    // 如果没有存储的过期时间，或者已过期，则设置为三个月后
+    if (!expiryTimestamp || currentTime >= expiryTimestamp) {
+      expiryTimestamp = currentTime + THREE_MONTHS_SECONDS;
+      await chrome.storage.local.set({ keyExpiry: expiryTimestamp });
+      // 更新显示
+      document.getElementById('keyExpiry').value = timestampToDateTimeLocal(expiryTimestamp);
+    }
+    
+    // 显示格式化时间
+    displayDiv.textContent = `过期时间: ${formatDateTime(expiryTimestamp)}`;
+    
+    // 计算剩余时间
+    if (currentTime >= expiryTimestamp) {
+      statusDiv.textContent = `❌ 密钥已过期 (过期时间: ${formatDateTime(expiryTimestamp)})`;
       statusDiv.className = 'status error';
       return false;
     } else {
-      const remaining = expiryTime - currentTime;
+      const remaining = expiryTimestamp - currentTime;
       const days = Math.floor(remaining / 86400);
       const hours = Math.floor((remaining % 86400) / 3600);
-      statusDiv.textContent = `✅ 密钥有效 (剩余: ${days}天${hours}小时)`;
+      const minutes = Math.floor((remaining % 86400 % 3600) / 60);
+      statusDiv.textContent = `✅ 密钥有效 (剩余: ${days}天${hours}小时${minutes}分钟)`;
       statusDiv.className = 'status success';
       return true;
     }
@@ -80,20 +149,45 @@ async function loadFollowedList() {
   // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   // 加载配置
-  const result = await chrome.storage.local.get(['interval', 'userList', 'keyExpiry', 'skipKeyCheck']);
+  const result = await chrome.storage.local.get(['interval', 'userList', 'keyExpiry']);
   if (result.interval) {
     document.getElementById('interval').value = result.interval;
   }
   if (result.userList) {
     document.getElementById('userList').value = result.userList;
   }
-  if (result.keyExpiry) {
-    document.getElementById('keyExpiry').value = result.keyExpiry;
-  } else {
-    document.getElementById('keyExpiry').value = KEY_EXPIRY_TIMESTAMP;
+  
+  // 如果有存储的密钥，自动填充
+  if (result.key) {
+    document.getElementById('newKey').value = result.key;
   }
-  if (result.skipKeyCheck !== undefined) {
-    document.getElementById('skipKeyCheck').checked = result.skipKeyCheck;
+  
+  // 如果有存储的过期时间，显示过期时间
+  if (result.keyExpiry) {
+    const expiryTimestamp = typeof result.keyExpiry === 'number' ? result.keyExpiry : parseInt(result.keyExpiry);
+    document.getElementById('keyExpiry').value = timestampToDateTimeLocal(expiryTimestamp);
+    // 如果有密钥，显示过期时间
+    if (result.key) {
+      try {
+        const currentTime = await getNetworkTime();
+        if (currentTime < expiryTimestamp) {
+          const remaining = expiryTimestamp - currentTime;
+          const days = Math.floor(remaining / 86400);
+          const hours = Math.floor((remaining % 86400) / 3600);
+          const minutes = Math.floor((remaining % 86400 % 3600) / 60);
+          document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)} (剩余: ${days}天${hours}小时${minutes}分钟)`;
+          document.getElementById('expiryStatus').textContent = `✅ 密钥有效 (剩余: ${days}天${hours}小时${minutes}分钟)`;
+          document.getElementById('expiryStatus').className = 'status success';
+        } else {
+          document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)}`;
+          document.getElementById('expiryStatus').textContent = `❌ 密钥已过期`;
+          document.getElementById('expiryStatus').className = 'status error';
+        }
+      } catch (e) {
+        // 忽略网络时间获取错误
+        document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)}`;
+      }
+    }
   }
   
   // 加载已关注列表
@@ -109,15 +203,49 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   
-  // 检查过期时间按钮
-  document.getElementById('checkExpiry').addEventListener('click', checkKeyExpiry);
+  // 检查密钥按钮
+  document.getElementById('checkExpiry').addEventListener('click', async () => {
+    try {
+      // 显示加载状态
+      const statusDiv = document.getElementById('expiryStatus');
+      statusDiv.textContent = '正在检查密钥...';
+      statusDiv.className = 'status info';
+      
+      const isValid = await checkKeyExpiry();
+      if (isValid) {
+        // 自动保存密钥
+        const inputKey = document.getElementById('newKey').value.trim();
+        await chrome.storage.local.set({ key: inputKey });
+        logSystem.addLog('密钥验证成功，已自动保存', 'success');
+        updateStatus('密钥验证成功，已自动保存', 'success');
+      } else {
+        logSystem.addLog('密钥验证失败', 'error');
+      }
+    } catch (error) {
+      console.error('检查密钥失败:', error);
+      const statusDiv = document.getElementById('expiryStatus');
+      statusDiv.textContent = `❌ 检查失败: ${error.message}`;
+      statusDiv.className = 'status error';
+      logSystem.addLog(`检查密钥失败: ${error.message}`, 'error');
+    }
+  });
+  
+  // 密钥输入框变化时自动保存（延迟保存，避免频繁写入）
+  let saveKeyTimeout = null;
+  document.getElementById('newKey').addEventListener('input', () => {
+    clearTimeout(saveKeyTimeout);
+    saveKeyTimeout = setTimeout(async () => {
+      const inputKey = document.getElementById('newKey').value.trim();
+      if (inputKey) {
+        await chrome.storage.local.set({ key: inputKey });
+      }
+    }, 1000); // 1秒后保存
+  });
   
   // 开始关注按钮
   document.getElementById('startBtn').addEventListener('click', async () => {
     const interval = parseInt(document.getElementById('interval').value);
     const userList = document.getElementById('userList').value.trim();
-    const keyExpiry = parseInt(document.getElementById('keyExpiry').value);
-    const skipKeyCheck = document.getElementById('skipKeyCheck').checked;
     
     if (!userList) {
       updateStatus('请输入关注名单', 'error');
@@ -129,23 +257,34 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     
-    // 检查密钥是否过期（如果未启用跳过检查）
-    if (!skipKeyCheck) {
-      const isValid = await checkKeyExpiry();
-      if (!isValid) {
-        updateStatus('密钥已过期，无法继续。如需继续，请勾选"跳过密钥检查"', 'error');
-        return;
-      }
-    } else {
-      updateStatus('⚠️ 已跳过密钥检查，正在启动...', 'info');
+    // 检查密钥是否正确
+    const inputKey = document.getElementById('newKey').value.trim();
+    if (!inputKey || inputKey !== HARDCODED_KEY) {
+      updateStatus('密钥错误或未输入，无法继续', 'error');
+      return;
+    }
+    
+    // 检查密钥是否过期（会从存储中获取过期时间）
+    const isValid = await checkKeyExpiry();
+    if (!isValid) {
+      updateStatus('密钥已过期，无法继续', 'error');
+      return;
+    }
+    
+    // 获取过期时间（从存储中）
+    const result = await chrome.storage.local.get(['keyExpiry']);
+    const keyExpiry = result.keyExpiry;
+    
+    if (!keyExpiry) {
+      updateStatus('密钥过期时间未设置，请先检查密钥', 'error');
+      return;
     }
     
     // 保存配置
     await chrome.storage.local.set({
       interval,
       userList,
-      keyExpiry,
-      skipKeyCheck
+      keyExpiry
     });
     
     // 获取当前标签页
@@ -174,8 +313,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         action: 'startFollow',
         interval,
         userList: userList.split('\n').filter(url => url.trim()),
-        keyExpiry,
-        skipKeyCheck
+        keyExpiry
       });
       
       document.getElementById('startBtn').disabled = true;
@@ -196,8 +334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           action: 'startFollow',
           interval,
           userList: userList.split('\n').filter(url => url.trim()),
-          keyExpiry,
-          skipKeyCheck
+          keyExpiry
         });
         document.getElementById('startBtn').disabled = true;
         document.getElementById('stopBtn').disabled = false;

@@ -11,14 +11,12 @@
     <h1>抖音自动加关注</h1>
     
     <div class="section">
-      <label for="keyExpiry">密钥过期时间（Unix时间戳）：</label>
-      <input type="number" id="keyExpiry" placeholder="例如：1768302100" />
-      <button id="checkExpiry">检查是否过期</button>
+      <label for="newKey">密钥：</label>
+      <input type="text" id="newKey" placeholder="请输入密钥" style="width: 100%; padding: 8px; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px;" />
+      <button id="checkExpiry">检查密钥并查看剩余时间</button>
       <div id="expiryStatus" class="status"></div>
-      <label class="checkbox-label" style="margin-top: 10px; display: flex; align-items: center; cursor: pointer;">
-        <input type="checkbox" id="skipKeyCheck" style="margin-right: 8px; width: auto;" />
-        <span>跳过密钥检查（测试模式）</span>
-      </label>
+      <div id="expiryDisplay" style="margin-top: 8px; font-size: 12px; color: #666;"></div>
+      <input type="datetime-local" id="keyExpiry" style="width: 100%; margin-top: 10px; display: none;" />
     </div>
 
     <div class="section">

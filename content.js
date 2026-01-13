@@ -1,4 +1,14 @@
 // 内容脚本：在抖音页面上执行关注操作
+// 使用IIFE避免重复加载导致的变量重复声明错误
+(function() {
+  'use strict';
+  
+  // 检查是否已经加载过，避免重复执行
+  if (window.douyinAutoFollowLoaded) {
+    console.log('抖音自动关注脚本已加载，跳过重复加载');
+    return;
+  }
+  window.douyinAutoFollowLoaded = true;
 
 let isFollowing = false;
 let followQueue = [];
@@ -27,8 +37,20 @@ async function isUserFollowed(url) {
   return followedUsers.includes(url);
 }
 
-// 获取网络时间
+// 获取网络时间（优先使用background script代理，避免CORS问题）
 async function getNetworkTime() {
+  try {
+    // 首先尝试通过background script代理获取（避免CORS问题）
+    const response = await chrome.runtime.sendMessage({ action: 'getNetworkTime' });
+    if (response && response.success && response.time) {
+      logger.info(`通过background script获取网络时间: ${response.time}`);
+      return response.time;
+    }
+  } catch (error) {
+    logger.warning(`通过background script获取时间失败: ${error.message}`);
+  }
+  
+  // 如果代理失败，尝试直接请求（可能受CORS限制）
   const TIME_APIS = [
     'https://api.uuni.cn/api/time',
     'http://vv.video.qq.com/checktime?otype=json'
@@ -36,7 +58,17 @@ async function getNetworkTime() {
   
   for (const api of TIME_APIS) {
     try {
-      const response = await fetch(api);
+      const response = await fetch(api, {
+        method: 'GET',
+        mode: 'cors',
+        cache: 'no-cache'
+      });
+      
+      if (!response.ok) {
+        logger.warning(`API ${api} 返回错误: ${response.status}`);
+        continue;
+      }
+      
       let data;
       
       if (api.includes('qq.com')) {
@@ -44,18 +76,30 @@ async function getNetworkTime() {
         const jsonMatch = text.match(/QZOutputJson=({.+})/);
         if (jsonMatch) {
           data = JSON.parse(jsonMatch[1]);
-          return data.t;
+          if (data.t) {
+            logger.info(`从 ${api} 获取时间成功: ${data.t}`);
+            return data.t;
+          }
         }
       } else {
         data = await response.json();
-        return data.timestamp;
+        if (data.timestamp) {
+          logger.info(`从 ${api} 获取时间成功: ${data.timestamp}`);
+          return data.timestamp;
+        }
       }
     } catch (error) {
-      console.error(`API ${api} 失败:`, error);
+      // 静默处理错误，尝试下一个API
+      logger.warning(`API ${api} 请求失败: ${error.message}`);
       continue;
     }
   }
-  throw new Error('所有时间API都不可用');
+  
+  // 如果所有API都失败，使用本地时间作为备用
+  logger.warning('所有时间API都不可用，使用本地时间');
+  const localTime = Math.floor(Date.now() / 1000);
+  logger.info(`使用本地时间: ${localTime}`);
+  return localTime;
 }
 
 // 检查密钥是否过期
@@ -81,7 +125,7 @@ async function saveFollowState() {
 
 // 恢复执行状态
 async function restoreFollowState() {
-  const result = await chrome.storage.local.get(['isFollowing', 'followQueue', 'currentIndex', 'followIntervalMs', 'keyExpiry', 'skipKeyCheck', 'interval']);
+  const result = await chrome.storage.local.get(['isFollowing', 'followQueue', 'currentIndex', 'followIntervalMs', 'keyExpiry', 'interval']);
   if (result.isFollowing && result.followQueue && result.followQueue.length > 0) {
     logger.info('检测到未完成的关注任务，正在恢复...');
     isFollowing = result.isFollowing;
@@ -102,7 +146,7 @@ async function restoreFollowState() {
       if (currentUrl === targetUrl) {
         logger.info('已在目标页面，继续处理关注操作...');
         setTimeout(async () => {
-          await processCurrentUser(url, result.keyExpiry, result.skipKeyCheck || false, currentIndex, followQueue.length, result.interval || 5);
+          await processCurrentUser(url, result.keyExpiry, currentIndex, followQueue.length, result.interval || 5);
         }, 3000);
       } else {
         // 如果不在目标页面，说明导航可能失败或还未完成，等待一下再检查
@@ -111,7 +155,7 @@ async function restoreFollowState() {
           const newUrl = window.location.href.split('?')[0];
           if (newUrl === targetUrl) {
             logger.info('页面已加载到目标页面，继续处理...');
-            await processCurrentUser(url, result.keyExpiry, result.skipKeyCheck || false, currentIndex, followQueue.length, result.interval || 5);
+            await processCurrentUser(url, result.keyExpiry, currentIndex, followQueue.length, result.interval || 5);
           } else {
             logger.error('页面导航失败，重新导航...');
             await navigateToUser(url);
@@ -123,13 +167,13 @@ async function restoreFollowState() {
 }
 
 // 处理当前用户（在页面加载完成后）
-async function processCurrentUser(url, keyExpiry, skipKeyCheck, index, total, interval) {
+async function processCurrentUser(url, keyExpiry, index, total, interval) {
   // 从存储中恢复统计信息
   const statsResult = await chrome.storage.local.get(['successCount', 'failCount']);
   let successCount = statsResult.successCount || 0;
   let failCount = statsResult.failCount || 0;
   
-  const result = await followUser(url, keyExpiry, skipKeyCheck, index, total);
+  const result = await followUser(url, keyExpiry, index, total);
   
   if (result) {
     successCount++;
@@ -398,24 +442,40 @@ async function clickFollowButton() {
 }
 
 // 处理单个用户关注
-async function followUser(url, keyExpiry, skipKeyCheck = false, index = 0, total = 0) {
+async function followUser(url, keyExpiry, index = 0, total = 0) {
   try {
     logger.info(`[${index + 1}/${total}] 开始处理用户: ${url}`);
     
-    // 检查密钥是否过期（如果未启用跳过检查）
-    if (!skipKeyCheck) {
-      logger.info('检查密钥是否过期...');
-      const isValid = await checkKeyExpiry(keyExpiry);
-      if (!isValid) {
-        logger.error('密钥已过期，停止关注');
-        sendMessage('updateStatus', '密钥已过期，停止关注', 'error');
-        stopFollow();
-        return false;
-      }
-      logger.success('密钥检查通过');
-    } else {
-      logger.warning('已跳过密钥检查');
+    // 检查密钥是否过期
+    logger.info('检查密钥是否过期...');
+    logger.info(`传入的过期时间: ${keyExpiry}`);
+    
+    // 如果 keyExpiry 未传入，从存储中获取
+    let actualKeyExpiry = keyExpiry;
+    if (!actualKeyExpiry) {
+      const storageResult = await chrome.storage.local.get(['keyExpiry']);
+      actualKeyExpiry = storageResult.keyExpiry;
+      logger.info(`从存储中获取过期时间: ${actualKeyExpiry}`);
     }
+    
+    if (!actualKeyExpiry) {
+      logger.error('密钥过期时间未设置');
+      sendMessage('updateStatus', '密钥过期时间未设置，请先检查密钥', 'error');
+      stopFollow();
+      return false;
+    }
+    
+    const currentTime = await getNetworkTime();
+    logger.info(`当前网络时间: ${currentTime}, 过期时间: ${actualKeyExpiry}`);
+    
+    const isValid = await checkKeyExpiry(actualKeyExpiry);
+    if (!isValid) {
+      logger.error(`密钥已过期 (当前时间: ${currentTime}, 过期时间: ${actualKeyExpiry})`);
+      sendMessage('updateStatus', '密钥已过期，停止关注', 'error');
+      stopFollow();
+      return false;
+    }
+    logger.success('密钥检查通过');
     
     // 检查是否已关注
     logger.info('检查用户是否已关注...');
@@ -485,7 +545,7 @@ async function followUser(url, keyExpiry, skipKeyCheck = false, index = 0, total
 }
 
 // 开始关注流程
-async function startFollow(userList, interval, keyExpiry, skipKeyCheck = false) {
+async function startFollow(userList, interval, keyExpiry) {
   if (isFollowing) {
     logger.warning('关注流程已在运行中');
     return;
@@ -493,7 +553,21 @@ async function startFollow(userList, interval, keyExpiry, skipKeyCheck = false) 
   
   logger.info('========== 开始关注流程 ==========');
   logger.info(`关注间隔: ${interval}秒`);
-  logger.info(`跳过密钥检查: ${skipKeyCheck ? '是' : '否'}`);
+  logger.info(`密钥过期时间: ${keyExpiry}`);
+  
+  // 如果没有传入过期时间，从存储中获取
+  let actualKeyExpiry = keyExpiry;
+  if (!actualKeyExpiry) {
+    const result = await chrome.storage.local.get(['keyExpiry']);
+    actualKeyExpiry = result.keyExpiry;
+    logger.info(`从存储中获取过期时间: ${actualKeyExpiry}`);
+  }
+  
+  if (!actualKeyExpiry) {
+    logger.error('密钥过期时间未设置');
+    sendMessage('updateStatus', '密钥过期时间未设置，请先检查密钥', 'error');
+    return;
+  }
   
   isFollowing = true;
   followQueue = userList.map(url => url.trim()).filter(url => url);
@@ -502,8 +576,7 @@ async function startFollow(userList, interval, keyExpiry, skipKeyCheck = false) 
   
   // 保存配置和状态
   await chrome.storage.local.set({
-    keyExpiry,
-    skipKeyCheck,
+    keyExpiry: actualKeyExpiry,
     interval
   });
   await saveFollowState();
@@ -576,7 +649,7 @@ async function startFollow(userList, interval, keyExpiry, skipKeyCheck = false) 
     }
     
     // 已在目标页面，处理关注
-    const result = await followUser(url, keyExpiry, skipKeyCheck, currentIndex, followQueue.length);
+    const result = await followUser(url, actualKeyExpiry, currentIndex, followQueue.length);
     
     if (result) {
       successCount++;
@@ -668,7 +741,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
     if (message.action === 'startFollow') {
       logger.info('收到开始关注消息');
-      startFollow(message.userList, message.interval, message.keyExpiry, message.skipKeyCheck || false);
+      startFollow(message.userList, message.interval, message.keyExpiry);
       sendResponse({ success: true });
     } else if (message.action === 'stopFollow') {
       logger.info('收到停止关注消息');
@@ -701,3 +774,5 @@ if (document.readyState === 'loading') {
   // 如果页面已经加载完成，立即初始化
   initContentScript();
 }
+
+})(); // IIFE结束，避免重复加载导致的变量重复声明错误
