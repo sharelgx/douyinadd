@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>抖音自动加关注</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>抖音自动加关注</h1>
+    
+    <div class="section">
+      <label for="keyExpiry">密钥过期时间（Unix时间戳）：</label>
+      <input type="number" id="keyExpiry" placeholder="例如：1768302100" />
+      <button id="checkExpiry">检查是否过期</button>
+      <div id="expiryStatus" class="status"></div>
+      <label class="checkbox-label" style="margin-top: 10px; display: flex; align-items: center; cursor: pointer;">
+        <input type="checkbox" id="skipKeyCheck" style="margin-right: 8px; width: auto;" />
+        <span>跳过密钥检查（测试模式）</span>
+      </label>
+    </div>
+
+    <div class="section">
+      <label for="interval">关注间隔（秒）：</label>
+      <input type="number" id="interval" value="5" min="1" />
+    </div>
+
+    <div class="section">
+      <label for="userList">关注名单（每行一个URL）：</label>
+      <textarea id="userList" rows="10" placeholder="https://www.douyin.com/user/MS4wLjABAAAArT4fQ3z0BSonVqw_gHpJs96kp0HDFDtVGruU5cK-jwpBWPf1HUYVy53v-6wDwUsL"></textarea>
+    </div>
+
+    <div class="section">
+      <button id="startBtn" class="btn-primary">开始关注</button>
+      <button id="stopBtn" class="btn-secondary" disabled>停止关注</button>
+      <button id="clearBtn" class="btn-secondary">清空已关注记录</button>
+    </div>
+
+    <div class="section">
+      <div id="status" class="status"></div>
+      <div id="progress" class="progress"></div>
+    </div>
+
+    <div class="section">
+      <h3>已关注用户列表</h3>
+      <div id="followedList" class="followed-list"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
