@@ -99,6 +99,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 加载已关注列表
   await loadFollowedList();
   
+  // 加载日志
+  await logSystem.loadLogs();
+  
+  // 清空日志按钮
+  document.getElementById('clearLogBtn').addEventListener('click', async () => {
+    if (confirm('确定要清空所有日志吗？')) {
+      await logSystem.clearLogs();
+    }
+  });
+  
   // 检查过期时间按钮
   document.getElementById('checkExpiry').addEventListener('click', checkKeyExpiry);
   
@@ -187,9 +197,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (message.action === 'updateProgress') {
       updateProgress(message.text);
     }
+    if (message.action === 'addLog') {
+      logSystem.addLog(message.text, message.type || 'info');
+    }
     if (message.action === 'followComplete') {
       document.getElementById('startBtn').disabled = false;
       document.getElementById('stopBtn').disabled = true;
+      updateStatus('✅ 所有任务已完成', 'success');
       loadFollowedList();
     }
   });
@@ -200,10 +214,86 @@ function updateStatus(text, type = 'info') {
   const statusDiv = document.getElementById('status');
   statusDiv.textContent = text;
   statusDiv.className = `status ${type}`;
+  // 同时添加到日志
+  logSystem.addLog(text, type);
 }
+
+// 日志系统
+const logSystem = {
+  // 添加日志
+  addLog: function(message, type = 'info') {
+    const logContainer = document.getElementById('logContainer');
+    if (!logContainer) return;
+    
+    const time = new Date().toLocaleTimeString('zh-CN');
+    const logEntry = document.createElement('div');
+    logEntry.className = `log-entry ${type}`;
+    logEntry.innerHTML = `<span class="log-time">[${time}]</span>${message}`;
+    
+    logContainer.appendChild(logEntry);
+    // 自动滚动到底部
+    logContainer.scrollTop = logContainer.scrollHeight;
+    
+    // 保存到存储（最多保存1000条）
+    this.saveLog(message, type, time);
+  },
+  
+  // 保存日志到存储
+  saveLog: async function(message, type, time) {
+    try {
+      const result = await chrome.storage.local.get(['logs']);
+      const logs = result.logs || [];
+      logs.push({ message, type, time, timestamp: Date.now() });
+      
+      // 只保留最近1000条日志
+      if (logs.length > 1000) {
+        logs.splice(0, logs.length - 1000);
+      }
+      
+      await chrome.storage.local.set({ logs });
+    } catch (error) {
+      console.error('保存日志失败:', error);
+    }
+  },
+  
+  // 加载日志
+  loadLogs: async function() {
+    try {
+      const result = await chrome.storage.local.get(['logs']);
+      const logs = result.logs || [];
+      const logContainer = document.getElementById('logContainer');
+      if (!logContainer) return;
+      
+      logContainer.innerHTML = '';
+      logs.forEach(log => {
+        const logEntry = document.createElement('div');
+        logEntry.className = `log-entry ${log.type}`;
+        logEntry.innerHTML = `<span class="log-time">[${log.time}]</span>${log.message}`;
+        logContainer.appendChild(logEntry);
+      });
+      
+      // 滚动到底部
+      logContainer.scrollTop = logContainer.scrollHeight;
+    } catch (error) {
+      console.error('加载日志失败:', error);
+    }
+  },
+  
+  // 清空日志
+  clearLogs: async function() {
+    await chrome.storage.local.set({ logs: [] });
+    const logContainer = document.getElementById('logContainer');
+    if (logContainer) {
+      logContainer.innerHTML = '';
+    }
+    this.addLog('日志已清空', 'info');
+  }
+};
 
 // 更新进度
 function updateProgress(text) {
   const progressDiv = document.getElementById('progress');
   progressDiv.textContent = text;
+  // 同时添加到日志
+  logSystem.addLog(text, 'info');
 }
