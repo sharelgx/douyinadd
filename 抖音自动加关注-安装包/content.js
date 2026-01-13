@@ -125,15 +125,7 @@ async function saveFollowState() {
 
 // 恢复执行状态
 async function restoreFollowState() {
-  const result = await chrome.storage.local.get(['isFollowing', 'followQueue', 'currentIndex', 'followIntervalMs', 'keyExpiry', 'interval', 'batchCount', 'batchWait', 'maxFollow', 'forceStop']);
-  
-  // 检查是否被强制停止
-  if (result.forceStop) {
-    logger.info('检测到强制停止标志，清除状态');
-    await chrome.storage.local.set({ forceStop: false, isFollowing: false });
-    return;
-  }
-  
+  const result = await chrome.storage.local.get(['isFollowing', 'followQueue', 'currentIndex', 'followIntervalMs', 'keyExpiry', 'interval']);
   if (result.isFollowing && result.followQueue && result.followQueue.length > 0) {
     logger.info('检测到未完成的关注任务，正在恢复...');
     isFollowing = result.isFollowing;
@@ -154,16 +146,7 @@ async function restoreFollowState() {
       if (currentUrl === targetUrl) {
         logger.info('已在目标页面，继续处理关注操作...');
         setTimeout(async () => {
-          await processCurrentUser(
-            url, 
-            result.keyExpiry, 
-            currentIndex, 
-            followQueue.length, 
-            result.interval || 5,
-            result.batchCount || 10,
-            result.batchWait || 60,
-            result.maxFollow || 0
-          );
+          await processCurrentUser(url, result.keyExpiry, currentIndex, followQueue.length, result.interval || 5);
         }, 3000);
       } else {
         // 如果不在目标页面，说明导航可能失败或还未完成，等待一下再检查
@@ -172,16 +155,7 @@ async function restoreFollowState() {
           const newUrl = window.location.href.split('?')[0];
           if (newUrl === targetUrl) {
             logger.info('页面已加载到目标页面，继续处理...');
-            await processCurrentUser(
-              url, 
-              result.keyExpiry, 
-              currentIndex, 
-              followQueue.length, 
-              result.interval || 5,
-              result.batchCount || 10,
-              result.batchWait || 60,
-              result.maxFollow || 0
-            );
+            await processCurrentUser(url, result.keyExpiry, currentIndex, followQueue.length, result.interval || 5);
           } else {
             logger.error('页面导航失败，重新导航...');
             await navigateToUser(url);
@@ -193,49 +167,22 @@ async function restoreFollowState() {
 }
 
 // 处理当前用户（在页面加载完成后）
-async function processCurrentUser(url, keyExpiry, index, total, interval, batchCount, batchWait, maxFollow) {
-  // 检查是否被强制停止
-  const stopCheck = await chrome.storage.local.get(['forceStop', 'isFollowing']);
-  if (stopCheck.forceStop || stopCheck.isFollowing === false) {
-    logger.warning('关注流程已被强制停止');
-    isFollowing = false;
-    await chrome.storage.local.set({ forceStop: false, isFollowing: false });
-    stopFollow();
-    return;
-  }
-  
+async function processCurrentUser(url, keyExpiry, index, total, interval) {
   // 从存储中恢复统计信息
   const statsResult = await chrome.storage.local.get(['successCount', 'failCount']);
   let successCount = statsResult.successCount || 0;
   let failCount = statsResult.failCount || 0;
   
-  // 获取当前已关注总数
-  const currentFollowedUsers = await getFollowedUsers();
-  let totalFollowed = currentFollowedUsers.length;
-  
-  // 检查关注上限
-  if (maxFollow > 0 && totalFollowed >= maxFollow) {
-    logger.info(`已达到关注上限 ${maxFollow}，自动停止`);
-    stopFollow();
-    sendMessage('updateStatus', `已达到关注上限 ${maxFollow}，自动停止`, 'success');
-    sendMessage('followComplete');
-    return;
-  }
-  
   const result = await followUser(url, keyExpiry, index, total);
   
   if (result) {
     successCount++;
-    totalFollowed++;
   } else {
     failCount++;
   }
   
   // 保存统计信息
   await chrome.storage.local.set({ successCount, failCount });
-  
-  // 更新统计信息
-  sendMessage('updateStatistics');
   
   currentIndex++;
   await saveFollowState();
@@ -578,8 +525,6 @@ async function followUser(url, keyExpiry, index = 0, total = 0) {
         await addFollowedUser(url);
         logger.success(`✓ 成功关注用户: ${url}`);
         sendMessage('updateProgress', `[${index + 1}/${total}] ✓ 已关注: ${url}`);
-        // 更新统计信息
-        sendMessage('updateStatistics');
         return true;
       } else {
         logger.warning('关注按钮已点击，但状态未更新，可能关注失败');
@@ -600,7 +545,7 @@ async function followUser(url, keyExpiry, index = 0, total = 0) {
 }
 
 // 开始关注流程
-async function startFollow(userList, interval, keyExpiry, batchCount = 10, batchWait = 60, maxFollow = 0) {
+async function startFollow(userList, interval, keyExpiry) {
   if (isFollowing) {
     logger.warning('关注流程已在运行中');
     return;
@@ -608,10 +553,6 @@ async function startFollow(userList, interval, keyExpiry, batchCount = 10, batch
   
   logger.info('========== 开始关注流程 ==========');
   logger.info(`关注间隔: ${interval}秒`);
-  logger.info(`批量设置: 关注${batchCount}个后等待${batchWait}秒`);
-  if (maxFollow > 0) {
-    logger.info(`关注上限: ${maxFollow}个`);
-  }
   logger.info(`密钥过期时间: ${keyExpiry}`);
   
   // 如果没有传入过期时间，从存储中获取
@@ -636,12 +577,7 @@ async function startFollow(userList, interval, keyExpiry, batchCount = 10, batch
   // 保存配置和状态
   await chrome.storage.local.set({
     keyExpiry: actualKeyExpiry,
-    interval,
-    batchCount,
-    batchWait,
-    maxFollow,
-    isFollowing: true,
-    forceStop: false
+    interval
   });
   await saveFollowState();
   
@@ -675,40 +611,14 @@ async function startFollow(userList, interval, keyExpiry, batchCount = 10, batch
   const statsResult = await chrome.storage.local.get(['successCount', 'failCount']);
   let successCount = statsResult.successCount || 0;
   let failCount = statsResult.failCount || 0;
-  let batchFollowedCount = 0; // 当前批次已关注数量
-  
-  // 获取当前已关注总数
-  const currentFollowedUsers = await getFollowedUsers();
-  let totalFollowed = currentFollowedUsers.length;
   
   // 开始关注循环
   const followNext = async () => {
-    // 检查是否被强制停止
-    const stopCheck = await chrome.storage.local.get(['forceStop', 'isFollowing']);
-    if (stopCheck.forceStop || stopCheck.isFollowing === false) {
-      logger.warning('关注流程已被强制停止');
-      isFollowing = false;
-      await chrome.storage.local.set({ forceStop: false, isFollowing: false });
-      stopFollow();
-      sendMessage('updateStatus', `已停止关注 (成功: ${successCount}, 失败: ${failCount})`, 'info');
-      sendMessage('followComplete');
-      return;
-    }
-    
     if (!isFollowing) {
       logger.warning('关注流程已被停止');
       await chrome.storage.local.remove(['successCount', 'failCount']);
       stopFollow();
       sendMessage('updateStatus', `已停止关注 (成功: ${successCount}, 失败: ${failCount})`, 'info');
-      sendMessage('followComplete');
-      return;
-    }
-    
-    // 检查关注上限
-    if (maxFollow > 0 && totalFollowed >= maxFollow) {
-      logger.info(`已达到关注上限 ${maxFollow}，自动停止`);
-      stopFollow();
-      sendMessage('updateStatus', `已达到关注上限 ${maxFollow}，自动停止`, 'success');
       sendMessage('followComplete');
       return;
     }
@@ -743,25 +653,12 @@ async function startFollow(userList, interval, keyExpiry, batchCount = 10, batch
     
     if (result) {
       successCount++;
-      batchFollowedCount++;
-      totalFollowed++;
-      
-      // 检查是否达到批量关注数量
-      if (batchCount > 0 && batchFollowedCount >= batchCount) {
-        logger.info(`已关注 ${batchFollowedCount} 个用户，等待 ${batchWait} 秒后继续...`);
-        sendMessage('updateStatus', `已关注 ${batchFollowedCount} 个，等待 ${batchWait} 秒后继续...`, 'info');
-        batchFollowedCount = 0; // 重置计数
-        await new Promise(resolve => setTimeout(resolve, batchWait * 1000));
-      }
     } else {
       failCount++;
     }
     
     // 保存统计信息
     await chrome.storage.local.set({ successCount, failCount });
-    
-    // 更新统计信息到popup
-    sendMessage('updateStatistics');
     
     currentIndex++;
     await saveFollowState(); // 保存进度
@@ -794,13 +691,8 @@ async function stopFollow() {
     clearTimeout(followInterval);
     followInterval = null;
   }
-  await chrome.storage.local.set({ 
-    isFollowing: false, 
-    forceStop: false 
-  });
-  await chrome.storage.local.remove(['followQueue', 'currentIndex', 'followIntervalMs', 'successCount', 'failCount']);
+  await chrome.storage.local.remove(['isFollowing', 'followQueue', 'currentIndex', 'followIntervalMs']);
   sendMessage('updateStatus', '已停止关注', 'info');
-  sendMessage('updateStatistics');
 }
 
 // 日志系统
@@ -849,14 +741,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   try {
     if (message.action === 'startFollow') {
       logger.info('收到开始关注消息');
-      startFollow(
-        message.userList, 
-        message.interval, 
-        message.keyExpiry,
-        message.batchCount || 10,
-        message.batchWait || 60,
-        message.maxFollow || 0
-      );
+      startFollow(message.userList, message.interval, message.keyExpiry);
       sendResponse({ success: true });
     } else if (message.action === 'stopFollow') {
       logger.info('收到停止关注消息');

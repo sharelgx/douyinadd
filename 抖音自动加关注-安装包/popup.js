@@ -72,16 +72,9 @@ async function getNetworkTime() {
 // 检查密钥并验证过期时间
 async function checkKeyExpiry() {
   try {
+    const inputKey = document.getElementById('newKey').value.trim();
     const statusDiv = document.getElementById('expiryStatus');
     const displayDiv = document.getElementById('expiryDisplay');
-    
-    // 优先从存储中获取密钥，如果没有则从输入框获取
-    const storageResult = await chrome.storage.local.get(['key']);
-    let inputKey = storageResult.key;
-    
-    if (!inputKey) {
-      inputKey = document.getElementById('newKey').value.trim();
-    }
     
     // 验证密钥
     if (!inputKey) {
@@ -97,9 +90,6 @@ async function checkKeyExpiry() {
       displayDiv.textContent = '';
       return false;
     }
-    
-    // 密钥正确，自动保存
-    await chrome.storage.local.set({ key: inputKey });
     
     // 密钥正确，获取当前网络时间
     const currentTime = await getNetworkTime();
@@ -159,67 +149,44 @@ async function loadFollowedList() {
   // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   // 加载配置
-  const result = await chrome.storage.local.get(['interval', 'userList', 'keyExpiry', 'batchCount', 'batchWait', 'maxFollow', 'key']);
+  const result = await chrome.storage.local.get(['interval', 'userList', 'keyExpiry']);
   if (result.interval) {
     document.getElementById('interval').value = result.interval;
   }
   if (result.userList) {
     document.getElementById('userList').value = result.userList;
   }
-  if (result.batchCount) {
-    document.getElementById('batchCount').value = result.batchCount;
-  }
-  if (result.batchWait) {
-    document.getElementById('batchWait').value = result.batchWait;
-  }
-  if (result.maxFollow) {
-    document.getElementById('maxFollow').value = result.maxFollow;
+  
+  // 如果有存储的密钥，自动填充
+  if (result.key) {
+    document.getElementById('newKey').value = result.key;
   }
   
-  // 如果有存储的密钥，自动填充并隐藏输入框（只需输入一次）
-  if (result.key && result.key === HARDCODED_KEY) {
-    document.getElementById('newKey').value = result.key;
-    document.getElementById('newKey').style.display = 'none';
-    document.getElementById('checkExpiry').style.display = 'none';
-    // 显示密钥已保存提示
-    const keySection = document.querySelector('.section:first-of-type');
-    // 检查是否已有提示，避免重复添加
-    if (!document.getElementById('keySavedHint')) {
-      const savedHint = document.createElement('div');
-      savedHint.id = 'keySavedHint';
-      savedHint.style.cssText = 'margin-top: 10px; padding: 8px; background: #d4edda; color: #155724; border-radius: 4px; font-size: 12px;';
-      savedHint.textContent = '✓ 密钥已保存，无需重复输入';
-      keySection.appendChild(savedHint);
-    }
-    
-    // 自动检查密钥是否过期
-    try {
-      await checkKeyExpiry();
-    } catch (error) {
-      console.error('自动检查密钥失败:', error);
-    }
-  } else if (result.keyExpiry) {
-    // 即使没有密钥，如果有过期时间，也显示
+  // 如果有存储的过期时间，显示过期时间
+  if (result.keyExpiry) {
     const expiryTimestamp = typeof result.keyExpiry === 'number' ? result.keyExpiry : parseInt(result.keyExpiry);
     document.getElementById('keyExpiry').value = timestampToDateTimeLocal(expiryTimestamp);
-    try {
-      const currentTime = await getNetworkTime();
-      if (currentTime < expiryTimestamp) {
-        const remaining = expiryTimestamp - currentTime;
-        const days = Math.floor(remaining / 86400);
-        const hours = Math.floor((remaining % 86400) / 3600);
-        const minutes = Math.floor((remaining % 86400 % 3600) / 60);
-        document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)} (剩余: ${days}天${hours}小时${minutes}分钟)`;
-        document.getElementById('expiryStatus').textContent = `✅ 密钥有效 (剩余: ${days}天${hours}小时${minutes}分钟)`;
-        document.getElementById('expiryStatus').className = 'status success';
-      } else {
+    // 如果有密钥，显示过期时间
+    if (result.key) {
+      try {
+        const currentTime = await getNetworkTime();
+        if (currentTime < expiryTimestamp) {
+          const remaining = expiryTimestamp - currentTime;
+          const days = Math.floor(remaining / 86400);
+          const hours = Math.floor((remaining % 86400) / 3600);
+          const minutes = Math.floor((remaining % 86400 % 3600) / 60);
+          document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)} (剩余: ${days}天${hours}小时${minutes}分钟)`;
+          document.getElementById('expiryStatus').textContent = `✅ 密钥有效 (剩余: ${days}天${hours}小时${minutes}分钟)`;
+          document.getElementById('expiryStatus').className = 'status success';
+        } else {
+          document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)}`;
+          document.getElementById('expiryStatus').textContent = `❌ 密钥已过期`;
+          document.getElementById('expiryStatus').className = 'status error';
+        }
+      } catch (e) {
+        // 忽略网络时间获取错误
         document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)}`;
-        document.getElementById('expiryStatus').textContent = `❌ 密钥已过期`;
-        document.getElementById('expiryStatus').className = 'status error';
       }
-    } catch (e) {
-      // 忽略网络时间获取错误
-      document.getElementById('expiryDisplay').textContent = `过期时间: ${formatDateTime(expiryTimestamp)}`;
     }
   }
   
@@ -246,23 +213,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       
       const isValid = await checkKeyExpiry();
       if (isValid) {
-        // 密钥验证成功，自动保存（已在checkKeyExpiry中保存）
+        // 自动保存密钥
         const inputKey = document.getElementById('newKey').value.trim();
-        if (inputKey === HARDCODED_KEY) {
-          await chrome.storage.local.set({ key: inputKey });
-          // 隐藏输入框和按钮
-          document.getElementById('newKey').style.display = 'none';
-          document.getElementById('checkExpiry').style.display = 'none';
-          // 显示已保存提示
-          if (!document.getElementById('keySavedHint')) {
-            const keySection = document.querySelector('.section:first-of-type');
-            const savedHint = document.createElement('div');
-            savedHint.id = 'keySavedHint';
-            savedHint.style.cssText = 'margin-top: 10px; padding: 8px; background: #d4edda; color: #155724; border-radius: 4px; font-size: 12px;';
-            savedHint.textContent = '✓ 密钥已保存，无需重复输入';
-            keySection.appendChild(savedHint);
-          }
-        }
+        await chrome.storage.local.set({ key: inputKey });
         logSystem.addLog('密钥验证成功，已自动保存', 'success');
         updateStatus('密钥验证成功，已自动保存', 'success');
       } else {
@@ -293,9 +246,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('startBtn').addEventListener('click', async () => {
     const interval = parseInt(document.getElementById('interval').value);
     const userList = document.getElementById('userList').value.trim();
-    const batchCount = parseInt(document.getElementById('batchCount').value) || 10;
-    const batchWait = parseInt(document.getElementById('batchWait').value) || 60;
-    const maxFollow = parseInt(document.getElementById('maxFollow').value) || 0;
     
     if (!userList) {
       updateStatus('请输入关注名单', 'error');
@@ -307,23 +257,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     
-    // 检查密钥是否正确（优先从存储中获取）
-    const keyResult = await chrome.storage.local.get(['key']);
-    let inputKey = keyResult.key;
-    
-    if (!inputKey) {
-      inputKey = document.getElementById('newKey').value.trim();
-    }
-    
+    // 检查密钥是否正确
+    const inputKey = document.getElementById('newKey').value.trim();
     if (!inputKey || inputKey !== HARDCODED_KEY) {
       updateStatus('密钥错误或未输入，无法继续', 'error');
       return;
     }
     
-    // 确保密钥已保存
-    await chrome.storage.local.set({ key: inputKey });
-    
-    // 检查密钥是否过期（会从存储中获取过期时间并自动检查）
+    // 检查密钥是否过期（会从存储中获取过期时间）
     const isValid = await checkKeyExpiry();
     if (!isValid) {
       updateStatus('密钥已过期，无法继续', 'error');
@@ -343,16 +284,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await chrome.storage.local.set({
       interval,
       userList,
-      keyExpiry,
-      batchCount,
-      batchWait,
-      maxFollow
-    });
-    
-    // 初始化统计信息
-    await chrome.storage.local.set({
-      startTime: Date.now(),
-      followedCount: 0
+      keyExpiry
     });
     
     // 获取当前标签页
@@ -381,10 +313,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         action: 'startFollow',
         interval,
         userList: userList.split('\n').filter(url => url.trim()),
-        keyExpiry,
-        batchCount,
-        batchWait,
-        maxFollow
+        keyExpiry
       });
       
       document.getElementById('startBtn').disabled = true;
@@ -405,10 +334,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           action: 'startFollow',
           interval,
           userList: userList.split('\n').filter(url => url.trim()),
-          keyExpiry,
-          batchCount,
-          batchWait,
-          maxFollow
+          keyExpiry
         });
         document.getElementById('startBtn').disabled = true;
         document.getElementById('stopBtn').disabled = false;
@@ -422,26 +348,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 停止关注按钮
   document.getElementById('stopBtn').addEventListener('click', async () => {
     try {
-      // 通过存储强制停止
-      await chrome.storage.local.set({ isFollowing: false, forceStop: true });
-      
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
       if (tab && tab.id) {
         try {
           await chrome.tabs.sendMessage(tab.id, { action: 'stopFollow' });
         } catch (error) {
-          // 如果消息发送失败，存储方式已经设置，会生效
-          console.log('无法发送停止消息，已通过存储方式停止:', error);
+          // 如果消息发送失败，通过存储来停止
+          console.log('无法发送停止消息，使用存储方式停止:', error);
+          await chrome.storage.local.set({ isFollowing: false });
         }
       }
       
       document.getElementById('startBtn').disabled = false;
       document.getElementById('stopBtn').disabled = true;
       updateStatus('已停止关注', 'info');
-      
-      // 停止统计计时
-      await chrome.storage.local.remove(['startTime']);
     } catch (error) {
       console.error('停止关注失败:', error);
       // 即使出错也更新UI
@@ -460,28 +381,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   
-  // 更新统计信息
-  async function updateStatistics() {
-    const result = await chrome.storage.local.get(['followedUsers', 'startTime']);
-    const followedCount = result.followedUsers ? result.followedUsers.length : 0;
-    document.getElementById('followedCount').textContent = followedCount;
-    
-    if (result.startTime) {
-      const runningTime = Math.floor((Date.now() - result.startTime) / 1000);
-      const hours = Math.floor(runningTime / 3600);
-      const minutes = Math.floor((runningTime % 3600) / 60);
-      const seconds = runningTime % 60;
-      document.getElementById('runningTime').textContent = 
-        `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    } else {
-      document.getElementById('runningTime').textContent = '00:00:00';
-    }
-  }
-  
-  // 定期更新统计信息
-  setInterval(updateStatistics, 1000);
-  updateStatistics();
-  
   // 监听来自content script的消息
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'updateStatus') {
@@ -493,16 +392,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (message.action === 'addLog') {
       logSystem.addLog(message.text, message.type || 'info');
     }
-    if (message.action === 'updateStatistics') {
-      updateStatistics();
-    }
     if (message.action === 'followComplete') {
       document.getElementById('startBtn').disabled = false;
       document.getElementById('stopBtn').disabled = true;
       updateStatus('✅ 所有任务已完成', 'success');
       loadFollowedList();
-      updateStatistics();
-      chrome.storage.local.remove(['startTime']);
     }
   });
 });

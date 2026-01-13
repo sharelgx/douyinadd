@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "抖音自动加关注",
+  "version": "1.0.0",
+  "description": "自动关注抖音用户，支持间隔设置和已关注标记",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.douyin.com/*",
+    "https://api.uuni.cn/*",
+    "http://vv.video.qq.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon.png",
+      "48": "icon.png",
+      "128": "icon.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.douyin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}
